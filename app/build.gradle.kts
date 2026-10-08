@@ -31,10 +31,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    packaging {
-        resources.excludes += setOf("META-INF/*.kotlin_module")
-    }
 }
 
 dependencies {
