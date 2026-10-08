@@ -157,19 +157,13 @@ public final class MainActivity extends Activity {
             }
 
             @Override
-            public boolean onConsoleMessage(WebChromeClient.JavaScriptConsoleMessage message) {
-                report(message.messageLevel(), message.sourceId(), message.lineNumber(), message.message());
-                return false;
-            }
-
-            @Override
-            public boolean onConsoleMessage(String message, int line, String source) {
-                // This older callback carries no level, and on API < 28 every
-                // console.log lands here. Claiming "error" would paint the
-                // screen red over routine page chatter; report() then only
-                // surfaces what actually reads as an uncaught failure.
+            public void onConsoleMessage(String message, int line, String source) {
+                // Deprecated since API 30, and still the one that fires everywhere:
+                // the framework's newer console hook forwards here by default. It
+                // carries no level, so report() only surfaces what actually reads
+                // as an uncaught failure rather than painting the screen red over
+                // routine page chatter.
                 report("log", source, line, message);
-                return false;
             }
         });
     }
