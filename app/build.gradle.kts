@@ -14,18 +14,8 @@ android {
         versionName = "decimen-0.5.3-shell-1"
     }
 
-    buildTypes {
-        // The CI ships the debug build on purpose: it is signed with the
-        // generated debug key so the APK installs by tapping it, and no
-        // keystore secret ever has to live in this repository.
-        get("debug") {
-            applicationIdSuffix = ""
-            isDebuggable = true
-        }
-        get("release") {
-            isMinifyEnabled = false
-        }
-    }
+    // No buildTypes block on purpose: the debug type already ships debuggable,
+    // unminified and with the applicationId above, and CI assembles only that.
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
