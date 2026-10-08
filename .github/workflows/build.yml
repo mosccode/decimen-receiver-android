@@ -1,0 +1,51 @@
+name: build apk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  debug-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The receiver page in assets/ is the official v0.5.3 build, byte for byte.
+      # If this step goes red, somebody edited or swapped it and the APK must not
+      # be trusted as a test of upstream behaviour.
+      - name: Verify the pinned upstream asset
+        run: sha256sum --check ASSET-SHA256SUMS.txt
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-34 build-tools;34.0.0
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Assemble
+        run: gradle --no-daemon assembleDebug
+
+      - name: Record what was built
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          {
+            echo "- APK: $(basename "$APK")"
+            echo "- 大小: $(stat -c%s "$APK") 字节"
+            echo "- SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)"
+            echo "- 内联接收端: $(sha256sum app/src/main/assets/decimen-receiver.html | cut -c1-16)…"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decimen-receiver-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

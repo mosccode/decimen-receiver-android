@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Finder pattern: filled ring, background gap, core. -->
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M26,26h24v24h-24z" />
+    <path
+        android:fillColor="@color/ink"
+        android:pathData="M30,30h16v16h-16z" />
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M34,34h8v8h-8z" />
+
+    <!-- Scattered modules, deliberately not a readable code. -->
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M58,26h8v8h-8z" />
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M70,38h8v8h-8z" />
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M58,50h8v8h-8z" />
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M70,62h8v8h-8z" />
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M26,58h8v8h-8z" />
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M38,70h8v8h-8z" />
+    <path
+        android:fillColor="@color/module"
+        android:pathData="M50,78h8v8h-8z" />
+</vector>

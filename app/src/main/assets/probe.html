@@ -1,0 +1,313 @@
+<!doctype html>
+<!--
+  Camera-path self-check for the WebView shell. It answers one question the
+  desktop harness cannot: does this build of WebView hand a page a real camera,
+  at what size and rate, and can a received file reach storage. It carries no
+  protocol code — the receiver page beside it is the official, unmodified build.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>摄像头自检</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #070a11;
+        --line: #1d2534;
+        --text: #dfe6f2;
+        --dim: #8b98ae;
+        --good: #7dd8a5;
+        --bad: #ff9a8f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        background: var(--ink);
+        color: var(--text);
+        margin: 0;
+      }
+      body {
+        font: 15px/1.5 system-ui, sans-serif;
+        padding: 14px 14px 28px;
+      }
+      h1 {
+        font-size: 17px;
+        font-weight: 600;
+        margin: 0 0 2px;
+      }
+      .sub {
+        color: var(--dim);
+        font-size: 13px;
+        margin: 0 0 14px;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 14px;
+      }
+      button {
+        font: 15px system-ui, sans-serif;
+        min-height: 44px;
+        padding: 0 16px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: #131a26;
+        color: var(--text);
+      }
+      button:active {
+        background: #1d2735;
+      }
+      button.primary {
+        border-color: #2f6f4f;
+        background: #16321f;
+      }
+      #video {
+        display: block;
+        width: 100%;
+        max-width: 420px;
+        aspect-ratio: 4 / 3;
+        background: #000;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        margin: 0 0 14px;
+        object-fit: contain;
+      }
+      #out {
+        width: 100%;
+        min-height: 46vh;
+        font: 13px/1.45 ui-monospace, monospace;
+        white-space: pre;
+        color: var(--text);
+        background: #0b1018;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        tab-size: 4;
+      }
+      .ok {
+        color: var(--good);
+      }
+      .no {
+        color: var(--bad);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>摄像头自检</h1>
+    <p class="sub">测通道，不碰协议 · 结果可直接复制</p>
+
+    <video id="video" playsinline muted></video>
+
+    <div class="row">
+      <button id="run">测摄像头</button>
+      <button id="save">测保存</button>
+      <button id="copy">复制结果</button>
+      <button id="go" class="primary">打开接收端</button>
+    </div>
+
+    <textarea id="out" readonly spellcheck="false"></textarea>
+
+    <script>
+      (function () {
+        "use strict";
+        var out = document.getElementById("out");
+        var video = document.getElementById("video");
+        var lines = [];
+        var stream = null;
+
+        function say(label, value, cls) {
+          var text = (value === undefined ? "" : value) + "";
+          if (cls) text = "[" + cls + "] " + text;
+          lines.push(pad(label) + text);
+          out.value = lines.join("\n") + "\n";
+          out.scrollTop = out.scrollHeight;
+        }
+        function pad(label) {
+          var l = label + " ";
+          while (l.length < 15) l += " ";
+          return l;
+        }
+        function yes(no, text) {
+          return (no ? "✓ " : "✗ ") + (text || "");
+        }
+        function json(value) {
+          try {
+            return JSON.stringify(value);
+          } catch (circular) {
+            return String(value);
+          }
+        }
+
+        say("壳", (window.AndroidBridge && AndroidBridge.shellVersion()) || "无 AndroidBridge");
+
+        var ua = navigator.userAgent;
+        var chrome = ua.match(/Chrome\/(\d+)/);
+        say("WebView", (chrome ? "Chrome " + chrome[1] : "非 Chromium") + " · " + (ua.length + " 字节 UA"));
+
+        say("安全上下文", yes(window.isSecureContext, location.origin));
+        say("mediaDevices", yes(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+        say("WakeLock", yes(!!navigator.wakeLock, "无则由壳保持常亮"));
+        say("ServiceWorker", yes(!!navigator.serviceWorker, "无则接收端走 blob 回退，属正常"));
+
+        try {
+          var header = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+          say("WebAssembly", yes(window.WebAssembly && WebAssembly.validate(header), "解码器的运行时"));
+        } catch (wasm) {
+          say("WebAssembly", yes(false, String(wasm)));
+        }
+        say("屏幕", screen.width + "×" + screen.height + " dpr " + (window.devicePixelRatio || 1));
+
+        function stop() {
+          if (!stream) return;
+          stream.getTracks().forEach(function (track) {
+            track.stop();
+          });
+          stream = null;
+          video.srcObject = null;
+        }
+
+        function measureFps(target, windowMs) {
+          return new Promise(function (resolve) {
+            if (!target.requestVideoFrameCallback) {
+              resolve("无 requestVideoFrameCallback");
+              return;
+            }
+            var frames = 0;
+            var first = 0;
+            var last = 0;
+            var handle = 0;
+            function tick(now) {
+              if (!first) first = now;
+              last = now;
+              frames++;
+              handle = target.requestVideoFrameCallback(tick);
+            }
+            handle = target.requestVideoFrameCallback(tick);
+            setTimeout(function () {
+              target.cancelVideoFrameCallback(handle);
+              var seconds = (last - first) / 1000;
+              resolve(frames < 2 || seconds <= 0 ? "3 秒内只出 " + frames + " 帧" : ((frames - 1) / seconds).toFixed(1) + " fps（" + frames + " 帧 / " + seconds.toFixed(2) + " 秒）");
+            }, windowMs);
+          });
+        }
+
+        document.getElementById("run").addEventListener("click", function () {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            say("getUserMedia", yes(false, "浏览器未提供该 API"));
+            return;
+          }
+          stop();
+          lines.push("");
+          say("— 摄像头 —", "");
+          var startedAt = performance.now();
+          var requested = {
+            audio: false,
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 60 },
+            },
+          };
+          navigator.mediaDevices
+            .getUserMedia(requested)
+            .then(function (live) {
+              stream = live;
+              var track = live.getVideoTracks()[0];
+              say("开流出图", "用时 " + (performance.now() - startedAt).toFixed(0) + " 毫秒");
+              video.srcObject = live;
+              video.play().catch(function (autoplay) {
+                say("预览", "自动播放被挡：" + autoplay.name);
+              });
+
+              var settings = track.getSettings();
+              say("实际分辨率", settings.width + "×" + settings.height);
+              say("实际帧率", (settings.frameRate || 0).toFixed(1) + " fps（要的是 60）");
+              say("镜头", settings.facingMode + " · deviceId " + String(settings.deviceId).slice(0, 8));
+              say("轨道状态", track.readyState + " / " + track.kind);
+
+              var caps = track.getCapabilities ? track.getCapabilities() : {};
+              var notes = [];
+              ["focusMode", "exposureMode", "whiteBalanceMode", "torch", "zoom"].forEach(function (key) {
+                if (caps[key] === undefined) return;
+                notes.push(key + "=" + json(caps[key]));
+              });
+              if (caps.maxFrameRate) notes.push("maxFrameRate=" + caps.maxFrameRate);
+              say("能力", notes.length ? notes.join(" ") : "getCapabilities 未报任何项");
+
+              return Promise.all([
+                track.applyConstraints
+                  ? track.applyConstraints({ advanced: [{ focusMode: "continuous" }] })
+                      .then(function () {
+                        return "连续对焦：接受";
+                      })
+                      .catch(function (refused) {
+                        return "连续对焦：拒绝（" + refused.name + "）";
+                      })
+                  : Promise.resolve("无 applyConstraints"),
+                measureFps(video, 3000),
+              ]);
+            })
+            .then(function (results) {
+              say("对焦", results[0]);
+              say("实测帧率", results[1]);
+              return navigator.mediaDevices.enumerateDevices();
+            })
+            .then(function (devices) {
+              var cams = devices.filter(function (d) {
+                return d.kind === "videoinput";
+              });
+              say("可用镜头", cams.length + " 个");
+              cams.forEach(function (cam, index) {
+                say("  #" + index, (cam.label || "无名") + " · " + cam.deviceId.slice(0, 8));
+              });
+              say("结论", yes(true, "摄像头通道打通，可以打开接收端"));
+            })
+            .catch(function (failure) {
+              say("失败", yes(false, (failure.name || "Error") + "：" + failure.message));
+              say("含义", "name=NotAllowed 是权限没给；NotFoundError 是选不到镜头；NotReadableError 是镜头被别的应用占着");
+            });
+        });
+
+        document.getElementById("save").addEventListener("click", function () {
+          if (!window.__decimenRxSave) {
+            say("保存通道", yes(false, "注入脚本还没到位"));
+            return;
+          }
+          var bytes = new Uint8Array(1024);
+          for (var i = 0; i < bytes.length; i++) bytes[i] = i % 256;
+          __decimenRxSave(bytes, "selftest-1k.bin", "application/octet-stream");
+          say("保存通道", yes(true, "已交出 1024 字节，看底部提示条的路径"));
+        });
+
+        document.getElementById("copy").addEventListener("click", function () {
+          var text = out.value;
+          if (window.AndroidBridge) {
+            AndroidBridge.copy(text);
+          } else if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).catch(function () {
+              out.select();
+            });
+          } else {
+            out.select();
+          }
+        });
+
+        document.getElementById("go").addEventListener("click", function () {
+          if (!window.AndroidBridge) {
+            say("接收端", yes(false, "没有 AndroidBridge，壳没接上"));
+            return;
+          }
+          stop();
+          AndroidBridge.openReceiver();
+        });
+
+        window.addEventListener("pagehide", stop);
+      })();
+    </script>
+  </body>
+</html>

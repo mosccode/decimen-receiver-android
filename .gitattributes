@@ -1,0 +1,12 @@
+# The upstream receiver page is pinned by SHA-256, in this repo, in CI, and in
+# the README. A checkout that rewrites line endings would break that promise on
+# Windows (core.autocrlf is on here), so every text file is stored and checked
+# out as LF regardless of the machine doing the clone.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.wasm binary
+*.apk binary
+*.jar binary
+*.keystore binary
