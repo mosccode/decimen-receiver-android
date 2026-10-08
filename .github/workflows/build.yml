@@ -18,6 +18,14 @@ jobs:
       - name: Verify the pinned upstream asset
         run: sha256sum --check ASSET-SHA256SUMS.txt
 
+      # gradle will catch a bad .java, but not a shell that drifted away from the
+      # page it drives: an element id the injected script renames, a method name on
+      # the JS bridge or on __decimenRxUi. tools/check.mjs asserts all of that
+      # against the pinned bytes, and it is the same gate the author runs locally
+      # because there is no JDK or SDK on that machine.
+      - name: Consistency gate
+        run: node tools/check.mjs
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

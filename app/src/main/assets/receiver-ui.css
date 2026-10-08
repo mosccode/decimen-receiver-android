@@ -1,0 +1,163 @@
+/*
+ * 壳在运行时注入的样式表。官方接收页的字节一个都不改（CI 每次按 SHA-256 校验），
+ * 改的是它在屏幕上长成什么样：页头页脚、大标题、页内设置面板交给壳的原生屏，
+ * 预览吃满可用高度，未启动时整屏就是那颗按钮。
+ *
+ * 注入的 <style> 追加在 <head> 末尾，与官方样式同优先级时后者让位；
+ * 只有官方用行内样式写死的地方（.preview 的 aspect-ratio）需要覆盖，
+ * 靠的是给宽高两个确定值让 aspect-ratio 自动失效，而不是 !important。
+ */
+
+body.receiver-page {
+  font-family: system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC",
+    "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+/* 页头页脚、大标题、页内设置与翻译提示：全部由壳的原生屏承担 */
+.site-header,
+.site-footer,
+.receiver-heading h1,
+.receiver-heading .eyebrow,
+#settings,
+.i18n-note,
+.locale-banner,
+.footer-lang,
+.mode-badge,
+.support-after {
+  display: none !important;
+}
+
+html,
+body {
+  padding: 0;
+}
+.receiver-shell {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+.receiver-primary {
+  gap: 8px;
+}
+
+/* 状态行贴在预览顶部，不占布局 */
+.receiver-heading {
+  position: fixed;
+  z-index: 6;
+  top: 6px;
+  left: 10px;
+  right: 10px;
+  margin: 0;
+}
+.status-line {
+  min-height: 0;
+  font-size: 12.5px;
+  text-align: center;
+  text-shadow: 0 1px 4px #000;
+}
+
+/* 未启动：整屏即按钮，一次轻触开镜头 */
+#start {
+  width: 100%;
+  min-width: 0;
+  min-height: calc(100dvh - 52px);
+  border-radius: 0;
+  font-size: 19px;
+}
+
+/* 启动后：预览吃满 */
+.preview-zone {
+  width: 100%;
+  max-width: none;
+}
+.preview {
+  width: 100%;
+  max-width: none;
+  height: calc(100dvh - 104px);
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+.preview video {
+  border-radius: 0;
+}
+.transfer-hud {
+  padding: 64px 12px 14px;
+}
+.progress {
+  height: 14px;
+  border-radius: 8px;
+}
+.progress-status {
+  font-size: 12.5px;
+}
+.progress-status strong {
+  font-size: 16px;
+}
+
+/* 暂停：镜头冻结由驱动做，这里只把画面说明和它的“没有反应”提示管住 */
+body.decimen-paused .no-signal-toast {
+  display: none !important;
+}
+body.decimen-paused .preview::after {
+  content: "已暂停";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text);
+  background: rgba(var(--bg-rgb), 0.82);
+}
+
+/* 实时诊断：收成一条窄带，展开才占地方 */
+.diagnostics {
+  width: 100%;
+  margin: 0;
+  padding: 0 12px 10px;
+}
+.diagnostics > summary {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.diagnostics .metrics {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+
+/* 完成后的结果卡 */
+#result {
+  width: 100%;
+  padding: 8px 14px calc(24px + env(safe-area-inset-bottom));
+}
+#result .done {
+  font-size: 20px;
+}
+#result .failed {
+  font-size: 18px;
+}
+.note-actions {
+  gap: 10px;
+}
+.secondary-button,
+.text-button,
+a.download {
+  display: inline-flex;
+  align-items: center;
+  min-height: 46px;
+  border-radius: 10px;
+}
+img.received,
+video.received {
+  width: 100%;
+  border-radius: 12px;
+}
+.help-dialog {
+  width: min(92vw, 520px);
+  border-radius: 14px;
+}

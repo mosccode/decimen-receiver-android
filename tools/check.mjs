@@ -21,6 +21,8 @@ const BRIDGE = join(ROOT, 'app/src/main/java/net/tare/decimenrx/SaveBridge.java'
 const SAVES = join(ROOT, 'app/src/main/java/net/tare/decimenrx/Saves.java');
 const STYLES = join(ROOT, 'app/src/main/res/values/styles.xml');
 const SHIM = join(ROOT, 'app/src/main/assets/save-shim.js');
+const DRIVER = join(ROOT, 'app/src/main/assets/receiver-ui.js');
+const INJECTED = join(ROOT, 'app/src/main/assets/receiver-ui.css');
 const PROBE = join(ROOT, 'app/src/main/assets/probe.html');
 const MANIFEST = join(ROOT, 'app/src/main/AndroidManifest.xml');
 const BUILD = join(ROOT, 'app/build.gradle.kts');
@@ -103,6 +105,7 @@ for (const id of new Set(ids)) {
 check('按钮都有落点', ['run', 'save', 'copy', 'go'].every((id) => probe.includes('id="' + id + '"')));
 
 syntax(SHIM, 'save-shim.js');
+syntax(DRIVER, 'receiver-ui.js');
 const dir = mkdtempSync(join(tmpdir(), 'decimen-rx-probe-'));
 const inline = join(dir, 'probe-inline.js');
 writeFileSync(inline, probe.match(/<script>([\s\S]*?)<\/script>/)[1]);
@@ -124,27 +127,70 @@ const build = readFileSync(BUILD, 'utf8');
 check('minSdk 26 起（安全上下文与自适应图标）', /minSdk = 26/.test(build));
 check('摄像头壳加载的是 asset 而非网络', /appassets\.androidplatform\.net/.test(readFileSync(MAIN, 'utf8')));
 
+console.log('注入层：壳改排版，不改协议字节');
+const asset = readFileSync(ASSET, 'utf8');
+const driver = readFileSync(DRIVER, 'utf8');
+const css = readFileSync(INJECTED, 'utf8');
+check('CSS 与驱动都在工程里且非空', css.length > 800 && driver.length > 1500,
+  css.length + ' / ' + driver.length + ' 字节');
+// 驱动只靠 id 找到官方页的元素；官方页一旦换掉这些 id，自动开镜头、暂停、
+// 参数面板会一起静默失效，所以这里把每个 el("x") 都对到原件上。
+const wanted = [...new Set([...driver.matchAll(/\bel\("([^"]+)"\)/g)].map((m) => m[1]))];
+for (const id of wanted) check('驱动要的 #' + id, asset.includes('id="' + id + '"'));
+check('至少认得启动按钮与结果卡', wanted.includes('start') && wanted.includes('result'));
+// 自动保存点在官方页自己那颗下载链接上；选择器与页内 class 必须对得上。
+check('自动落盘点的是页自己的保存链接', /#result a\.download/.test(driver)
+  && /a\.className="download"/.test(asset));
+// 注入样式表里被我们隐形的每一条 class，都必须是官方页真的有的名字，
+// 否则「设置面板搬走了」其实只是一个拼错的规则。
+const hidden = [...css.matchAll(/^\.([a-z][\w-]*)[,\s]/gm)].map((m) => m[1]);
+for (const name of new Set(hidden)) {
+  if (name === 'preview' || name === 'decimen-paused') continue;
+  check('样式针对 .' + name, asset.includes('.' + name) || asset.includes('"' + name + '"')
+    || asset.includes(name + '"'));
+}
+check('暂停由 CSS 收掉「无信号」提示', /body\.decimen-paused \.no-signal-toast/.test(css)
+  && asset.includes('no-signal-toast'));
+
 console.log('壳的手感');
 const main = readFileSync(MAIN, 'utf8');
 const saves = readFileSync(SAVES, 'utf8');
 const styles = readFileSync(STYLES, 'utf8');
 const shim = readFileSync(SHIM, 'utf8');
 check('打开就是接收端，不是调试台', /web\.loadUrl\(RECEIVER_URL\);/.test(main));
-for (const label of ['自检', '已收文件', '关于']) {
-  check('底栏有「' + label + '」这一项', main.includes('tab("' + label + '"'));
+for (const label of ['接收', '文件', '设置']) {
+  check('底栏有「' + label + '」这一项', main.includes('"' + label + '", () ->'));
 }
-check('底栏三项都接得到实现', ['openProbe()', 'showFiles()', 'showAbout()'].every((name) => main.includes(name)));
-check('自检是子页：返回键回到接收端', /onBackPressed\(\)[\s\S]{0,260}openReceiver\(\);/.test(main));
+check('自检没有消失，只是搬到设置里', /摄像头自检/.test(main) && /openProbe\(\)/.test(main)
+  && !/tab\("自检"/.test(main));
+check('控制条三颗都接得到实现', ['togglePause()', 'toggleTorch()', 'reset()'].every((n) => main.includes(n)));
+check('控制条按页面实况点亮，灰的就是点不动', /paintControl\(TextView button, boolean active, boolean enabled\)/.test(main)
+  && /button\.setEnabled\(enabled\)/.test(main));
+// 原生屏与注入驱动之间的只有这几个名字，两侧任意一边改名都会静默失灵。
+for (const name of ['state', 'start', 'setPaused', 'torch', 'settings', 'setSetting']) {
+  const nativeSide = main.includes('__decimenRxUi.' + name);
+  check('__decimenRxUi.' + name, nativeSide && new RegExp('\\b' + name + '\\s*:\\s*' + name + '\\b').test(driver));
+}
+check('进接收屏即自动开镜头', /__decimenRxUi && __decimenRxUi\.start\(\)/.test(main));
+check('WebView 高度恒定，面板压在它下方', /fullFrame\(bars\)/.test(main) && /dp\(NAV_BAR_DP\)/.test(main)
+  && !/web\.setLayoutParams/.test(main));
+check('自检是子页：返回键回到接收端', /onBackPressed\(\)[\s\S]{0,320}openReceiver\(\);/.test(main));
 check('不再全屏遮挡，状态栏可见', !/windowFullscreen/.test(styles));
 check('双指缩放开着', /setSupportZoom\(true\)/.test(main));
-check('结果条只在错误时用红', /fault \? "#b3261e"/.test(main) && /postDelayed\(hideStatus/.test(main));
+check('结果条只在错误时用红', /fault \? FAULT/.test(main) && /postDelayed\(hideStatus/.test(main));
 check('切页前释放镜头', /__decimenRxEjectCamera = function/.test(shim) && /__decimenRxEjectCamera/.test(main));
-check('文件面板两端都认', /Saves\.rows\(this\)/.test(main) && /Saves\.open\(this, which\)/.test(main)
-  && /static String\[\] rows\(/.test(saves) && /static void open\(/.test(saves));
-check('落成功才进历史，落坏的不进', /Saves\.record\(/.test(bridge) && /static void record\(/.test(saves));
+check('文件列表读得到、打得开、能分享、能删',
+  ['Saves.entries(', 'Saves.open(', 'Saves.share(', 'Saves.remove('].every((n) => main.includes(n))
+  && /static JSONArray entries\(/.test(saves) && /static void open\(/.test(saves)
+  && /static void share\(/.test(saves) && /static void remove\(/.test(saves));
+check('落成功才进历史，重名重大小只记一条', /Saves\.record\(/.test(bridge)
+  && /static void record\(/.test(saves) && /old\.optLong\("size"\) == size/.test(saves));
 check('已完成的文件不会被下一次保存当残料删掉',
   /void saveEnd\(String session\)[\s\S]{0,1200}mediaUri = null;[\s\S]{0,160}plainFile = null;/.test(bridge));
-check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-2/.test(build));
+check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-3/.test(build));
+// android.jar 与参考实现 org.json 的静态方法签名不完全一致，而本机无法编译验证；
+// 过桥的字符串一律由自己那套转义负责。
+check('不赌 JSONObject.quote 的签名', !/JSONObject\.quote\(/.test(main));
 
 await javaParse();
 

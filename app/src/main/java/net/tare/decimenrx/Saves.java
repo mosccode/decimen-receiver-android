@@ -12,6 +12,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -48,7 +49,13 @@ final class Saves {
             JSONArray next = new JSONArray();
             next.put(entry);
             for (int i = 0; i < previous.length() && next.length() < LIMIT; i++) {
-                next.put(previous.opt(i));
+                JSONObject old = previous.optJSONObject(i);
+                if (old == null) continue;
+                // The page's own Save link stays on screen after the shell has
+                // auto-saved, so tapping it again is a legitimate second write to
+                // a different path — but listing the same file twice is not.
+                if (old.optLong("size") == size && old.optString("name").equals(name)) continue;
+                next.put(old);
             }
             prefs(activity).edit().putString(KEY, next.toString()).apply();
         } catch (JSONException broken) {
@@ -56,16 +63,65 @@ final class Saves {
         }
     }
 
-    static String[] rows(MainActivity activity) {
-        JSONArray all = read(activity);
-        String[] out = new String[all.length()];
-        for (int i = 0; i < all.length(); i++) {
-            JSONObject entry = all.optJSONObject(i);
-            out[i] = entry == null ? "损坏的记录"
-                    : entry.optString("name") + " · " + human(entry.optLong("size"))
-                            + " · " + when(entry.optLong("at"));
+    static JSONArray entries(MainActivity activity) {
+        return read(activity);
+    }
+
+    static String human(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        double kb = bytes / 1024.0;
+        if (kb < 1024) return format(kb, "KB");
+        double mb = kb / 1024.0;
+        if (mb < 1024) return format(mb, "MB");
+        return format(mb / 1024.0, "GB");
+    }
+
+    static String when(long epochSeconds) {
+        if (epochSeconds <= 0) return "时间未知";
+        return new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(new Date(epochSeconds * 1000L));
+    }
+
+    /** Hand the file to another app. The page has no share path in a WebView. */
+    static void share(MainActivity activity, int index) {
+        JSONObject entry = read(activity).optJSONObject(index);
+        if (entry == null) return;
+        String uri = entry.optString("uri");
+        if (uri.isEmpty()) {
+            copyPath(activity, entry);
+            return;
         }
-        return out;
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType(entry.optString("mime", "application/octet-stream"));
+        intent.putExtra(Intent.EXTRA_STREAM, Uri.parse(uri));
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            activity.startActivity(Intent.createChooser(intent, entry.optString("name")));
+        } catch (ActivityNotFoundException none) {
+            activity.say("没有应用接收这份文件");
+        }
+    }
+
+    /** Drop the file and its line in the list; the list is the only index. */
+    static void remove(MainActivity activity, int index) {
+        JSONArray all = read(activity);
+        JSONObject entry = all.optJSONObject(index);
+        if (entry == null) return;
+        String uri = entry.optString("uri");
+        String path = entry.optString("path");
+        boolean gone = true;
+        if (!uri.isEmpty()) {
+            gone = activity.getContentResolver().delete(Uri.parse(uri), null, null) > 0;
+        } else if (!path.isEmpty()) {
+            File file = new File(path);
+            gone = !file.exists() || file.delete();
+        }
+        JSONArray next = new JSONArray();
+        for (int i = 0; i < all.length(); i++) {
+            if (i != index) next.put(all.opt(i));
+        }
+        prefs(activity).edit().putString(KEY, next.toString()).apply();
+        activity.say(gone ? "已删除 " + entry.optString("name")
+                : "记录去掉了，但文件没删掉：" + (uri.isEmpty() ? path : uri));
     }
 
     static void open(MainActivity activity, int index) {
@@ -73,15 +129,7 @@ final class Saves {
         if (entry == null) return;
         String uri = entry.optString("uri");
         if (uri.isEmpty()) {
-            // Below API 29 the file sits in this app's own directory. A file://
-            // Uri handed to another app trips FileUriExposedException, so give the
-            // path to the user instead of a crash.
-            String path = entry.optString("path");
-            ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-            if (clipboard != null) {
-                clipboard.setPrimaryClip(ClipData.newPlainText("Decimen", path));
-            }
-            activity.say("已复制路径：" + path);
+            copyPath(activity, entry);
             return;
         }
         Intent intent = new Intent(Intent.ACTION_VIEW);
@@ -92,6 +140,20 @@ final class Saves {
         } catch (ActivityNotFoundException none) {
             activity.say("这台机器上没有能打开 " + entry.optString("name") + " 的应用");
         }
+    }
+
+    /**
+     * Below API 29 the file sits in this app's own directory. There is no content
+     * Uri to grant, and a file:// Uri handed to another app trips
+     * FileUriExposedException, so the path goes to the clipboard instead.
+     */
+    private static void copyPath(MainActivity activity, JSONObject entry) {
+        String path = entry.optString("path");
+        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("Decimen", path));
+        }
+        activity.say("已复制路径：" + path);
     }
 
     private static JSONArray read(MainActivity activity) {
@@ -106,21 +168,7 @@ final class Saves {
         return activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    private static String human(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        double kb = bytes / 1024.0;
-        if (kb < 1024) return format(kb, "KB");
-        double mb = kb / 1024.0;
-        if (mb < 1024) return format(mb, "MB");
-        return format(mb / 1024.0, "GB");
-    }
-
     private static String format(double value, String unit) {
         return String.format(Locale.getDefault(), "%.1f %s", value, unit);
-    }
-
-    private static String when(long epochSeconds) {
-        if (epochSeconds <= 0) return "时间未知";
-        return new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(new Date(epochSeconds * 1000L));
     }
 }
