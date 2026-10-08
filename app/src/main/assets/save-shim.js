@@ -73,12 +73,17 @@
       fetch(href)
         .then(function (response) {
           if (!response.ok) throw new Error("HTTP " + response.status);
-          return response.arrayBuffer();
+          return Promise.all([response.arrayBuffer(), response.headers.get("content-type")]);
         })
-        .then(function (buffer) {
+        .then(function (parts) {
           // The shell reports where the bytes landed — on its own bar, and in
           // 已收文件 — because the real path depends on the Android version.
-          handOff(new Uint8Array(buffer), name, "");
+          //
+          // The type is the blob's own: a PNG handed over as octet-stream is a
+          // PNG the gallery will not offer to open. Chromium answers a blob:
+          // request with the type the Blob was built with, which is exactly the
+          // one the receiver page put there.
+          handOff(new Uint8Array(parts[0]), name, String(parts[1] || "").split(";")[0].trim());
         })
         .catch(function (error) {
           BRIDGE.saveFailed(String(error && error.message ? error.message : error));

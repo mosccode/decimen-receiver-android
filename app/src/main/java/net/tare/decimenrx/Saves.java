@@ -42,7 +42,7 @@ final class Saves {
             entry.put("path", path == null ? "" : path);
             entry.put("uri", uri == null ? "" : uri);
             entry.put("size", size);
-            entry.put("mime", mime == null || mime.isEmpty() ? "application/octet-stream" : mime);
+            entry.put("mime", SaveBridge.usable(mime, name));
             entry.put("at", System.currentTimeMillis() / 1000L);
 
             JSONArray previous = read(activity);
@@ -91,7 +91,7 @@ final class Saves {
             return;
         }
         Intent intent = new Intent(Intent.ACTION_SEND);
-        intent.setType(entry.optString("mime", "application/octet-stream"));
+        intent.setType(SaveBridge.usable(entry.optString("mime"), entry.optString("name")));
         intent.putExtra(Intent.EXTRA_STREAM, Uri.parse(uri));
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
@@ -133,7 +133,11 @@ final class Saves {
             return;
         }
         Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(Uri.parse(uri), entry.optString("mime", "application/octet-stream"));
+        // Re-derived rather than trusted: a line written before the shell learned
+        // to carry the blob's type says octet-stream for a PNG, and then 相册 is
+        // not in the list no matter what the file itself is.
+        intent.setDataAndType(Uri.parse(uri),
+                SaveBridge.usable(entry.optString("mime"), entry.optString("name")));
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
             activity.startActivity(intent);

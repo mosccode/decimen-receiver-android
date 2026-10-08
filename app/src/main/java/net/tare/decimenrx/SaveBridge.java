@@ -9,12 +9,14 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.util.MimeTypeMap;
 import android.webkit.JavascriptInterface;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.Locale;
 
 /**
  * The only things the page may ask the device for: write bytes to storage, put
@@ -26,6 +28,8 @@ import java.io.OutputStream;
  */
 public final class SaveBridge {
 
+    private static final String GENERIC = "application/octet-stream";
+
     private final MainActivity activity;
 
     private String session;
@@ -33,7 +37,7 @@ public final class SaveBridge {
     private Uri mediaUri;
     private File plainFile;
     private String name = "";
-    private String mime = "application/octet-stream";
+    private String mime = GENERIC;
     private String display = "";
     private String savedUri = "";
     private String savedPath = "";
@@ -49,7 +53,7 @@ public final class SaveBridge {
         discard();
         this.session = session == null ? "" : session;
         name = safeName(rawName);
-        this.mime = mime == null || mime.isEmpty() ? "application/octet-stream" : mime;
+        this.mime = usable(mime, name);
         savedUri = "";
         savedPath = "";
         try {
@@ -204,8 +208,25 @@ public final class SaveBridge {
         return candidate;
     }
 
-    static String safeName(String raw) {
-        String value = raw == null ? "" : raw.trim();
+    /**
+     * The type a file is filed under decides which apps the system will offer for
+     * it: an image stored as octet-stream never reaches 相册, however obvious its
+     * name is. So take the page's word when it is a real type, and otherwise fall
+     * back to the extension — a blob the sender never labelled comes back with no
+     * type at all, and a mislabelled one says octet-stream.
+     */
+    static String usable(String mime, String name) {
+        String value = mime == null ? "" : mime.trim();
+        int parameter = value.indexOf(';');
+        if (parameter >= 0) value = value.substring(0, parameter).trim();
+        if (value.matches("[\\w.!#$&^+\\-.]+/[\\w.!#$&^+\\-.]+") && !GENERIC.equals(value)) return value;
+        int dot = name.lastIndexOf('.');
+        String guessed = dot < 0 ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+                name.substring(dot + 1).toLowerCase(Locale.US));
+        return guessed == null || guessed.isEmpty() ? GENERIC : guessed;
+    }
+
+    static String safeName(String raw) {        String value = raw == null ? "" : raw.trim();
         int cut = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
         if (cut >= 0) value = value.substring(cut + 1);
         StringBuilder kept = new StringBuilder();

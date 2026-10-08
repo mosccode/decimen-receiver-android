@@ -96,6 +96,17 @@ for (const method of ['saveBegin', 'saveChunk', 'saveEnd', 'saveFailed', 'copy',
 }
 check('注册名与页面取用的名字一致', readFileSync(MAIN, 'utf8').includes('"AndroidBridge"') && pages.includes('window.AndroidBridge'));
 
+console.log('落盘带的类型');
+// 存进 MediaStore 的类型决定系统给不给出相册：图片被记成 octet-stream，
+// 「打开方式」里就永远只有文件管理器。
+const shimSource = readFileSync(SHIM, 'utf8');
+check('桥接把 blob 自己的类型交给原生', /headers\.get\("content-type"\)/.test(shimSource)
+  && !/handOff\(new Uint8Array\(buffer\), name, ""\)/.test(shimSource));
+const bridgeSource = readFileSync(BRIDGE, 'utf8');
+check('类型缺失或含糊时按扩展名补', /static String usable\(String mime, String name\)/.test(bridgeSource)
+  && /MimeTypeMap\.getSingleton\(\)/.test(bridgeSource));
+check('打开与分享都重新认一次类型', (readFileSync(SAVES, 'utf8').match(/SaveBridge\.usable\(/g) || []).length >= 3);
+
 console.log('自检页');
 const probe = readFileSync(PROBE, 'utf8');
 const ids = [...probe.matchAll(/getElementById\("([^"]+)"\)/g)].map((match) => match[1]);
@@ -187,7 +198,7 @@ check('落成功才进历史，重名重大小只记一条', /Saves\.record\(/.t
   && /static void record\(/.test(saves) && /old\.optLong\("size"\) == size/.test(saves));
 check('已完成的文件不会被下一次保存当残料删掉',
   /void saveEnd\(String session\)[\s\S]{0,1200}mediaUri = null;[\s\S]{0,160}plainFile = null;/.test(bridge));
-check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-3/.test(build));
+check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-4/.test(build));
 // android.jar 与参考实现 org.json 的静态方法签名不完全一致，而本机无法编译验证；
 // 过桥的字符串一律由自己那套转义负责。
 check('不赌 JSONObject.quote 的签名', !/JSONObject\.quote\(/.test(main));
