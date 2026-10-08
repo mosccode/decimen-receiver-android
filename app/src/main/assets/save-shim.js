@@ -1,7 +1,8 @@
-// Injected by the shell into both pages after load. Two jobs, nothing else:
+// Injected by the shell into both pages after load. Three jobs, nothing else:
 // turn the page's blob: download link into bytes on disk (WebView's own
-// download callback cannot read a blob: URL), and give the self-check page the
-// same path so it can prove that pipeline before a real transfer runs.
+// download callback cannot read a blob: URL), release the camera when the shell
+// switches pages, and give the self-check page the same save path so it can
+// prove that pipeline before a real transfer runs.
 (function () {
   "use strict";
 
@@ -20,19 +21,33 @@
     return btoa(text);
   }
 
-  function handOff(bytes, name, mime, done) {
+  function handOff(bytes, name, mime) {
     var id = String(Date.now()) + "-" + Math.floor(Math.random() * 1000000);
     BRIDGE.saveBegin(id, name, mime || "application/octet-stream", bytes.length);
     for (var sent = 0; sent < bytes.length; sent += CHUNK) {
       BRIDGE.saveChunk(id, base64(bytes, sent, Math.min(sent + CHUNK, bytes.length)));
     }
     BRIDGE.saveEnd(id);
-    if (done) done(bytes.length);
   }
 
   // Callable from the self-check page: same code path a real receive takes.
-  window.__decimenRxSave = function (bytes, name, mime, done) {
-    handOff(bytes, name, mime, done);
+  window.__decimenRxSave = function (bytes, name, mime) {
+    handOff(bytes, name, mime);
+  };
+
+  // The shell calls this before switching pages. A phone opens one camera at a
+  // time, and the page keeps its stream in a closure the shell cannot reach —
+  // but every track is attached to a <video> element in the DOM.
+  window.__decimenRxEjectCamera = function () {
+    var videos = document.querySelectorAll("video");
+    for (var i = 0; i < videos.length; i++) {
+      var source = videos[i].srcObject;
+      if (!source || !source.getTracks) continue;
+      var tracks = source.getTracks();
+      for (var t = 0; t < tracks.length; t++) tracks[t].stop();
+      videos[i].srcObject = null;
+    }
+    return videos.length;
   };
 
   document.addEventListener(
@@ -61,14 +76,9 @@
           return response.arrayBuffer();
         })
         .then(function (buffer) {
-          handOff(new Uint8Array(buffer), name, "", function () {
-            // Give the link a visible outcome of its own, so a save that
-            // landed is not mistaken for one that silently did nothing.
-            var note = document.createElement("div");
-            note.textContent = "已写入 Download/Decimen/" + name;
-            note.setAttribute("style", "padding:6px 10px;margin-top:8px;border:1px solid #2f6f4f;border-radius:6px;color:#b9f0cf;background:#0c1a14;font-size:14px");
-            (node.parentNode || document.body).appendChild(note);
-          });
+          // The shell reports where the bytes landed — on its own bar, and in
+          // 已收文件 — because the real path depends on the Android version.
+          handOff(new Uint8Array(buffer), name, "");
         })
         .catch(function (error) {
           BRIDGE.saveFailed(String(error && error.message ? error.message : error));

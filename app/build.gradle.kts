@@ -10,8 +10,8 @@ android {
         applicationId = "net.tare.decimenrx"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "decimen-0.5.3-shell-1"
+        versionCode = 2
+        versionName = "decimen-0.5.3-shell-2"
     }
 
     // No buildTypes block on purpose: the debug type already ships debuggable,

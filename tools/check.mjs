@@ -18,6 +18,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MAIN = join(ROOT, 'app/src/main/java/net/tare/decimenrx/MainActivity.java');
 const BRIDGE = join(ROOT, 'app/src/main/java/net/tare/decimenrx/SaveBridge.java');
+const SAVES = join(ROOT, 'app/src/main/java/net/tare/decimenrx/Saves.java');
+const STYLES = join(ROOT, 'app/src/main/res/values/styles.xml');
 const SHIM = join(ROOT, 'app/src/main/assets/save-shim.js');
 const PROBE = join(ROOT, 'app/src/main/assets/probe.html');
 const MANIFEST = join(ROOT, 'app/src/main/AndroidManifest.xml');
@@ -57,7 +59,11 @@ async function javaParse() {
   const dot = (pkg.exports || {})['.'] || pkg.main;
   const target = typeof dot === 'string' ? dot : dot.import || dot.default;
   const { parse } = await import(pathToFileURL(resolve(entry, target)).href);
-  for (const [file, label] of [[MAIN, 'MainActivity.java'], [BRIDGE, 'SaveBridge.java']]) {
+  for (const [file, label] of [
+    [MAIN, 'MainActivity.java'],
+    [BRIDGE, 'SaveBridge.java'],
+    [SAVES, 'Saves.java'],
+  ]) {
     try {
       parse(readFileSync(file, 'utf8'));
       check(label + ' 解析', true);
@@ -117,6 +123,28 @@ check('allowBackup 关闭', /android:allowBackup="false"/.test(manifest));
 const build = readFileSync(BUILD, 'utf8');
 check('minSdk 26 起（安全上下文与自适应图标）', /minSdk = 26/.test(build));
 check('摄像头壳加载的是 asset 而非网络', /appassets\.androidplatform\.net/.test(readFileSync(MAIN, 'utf8')));
+
+console.log('壳的手感');
+const main = readFileSync(MAIN, 'utf8');
+const saves = readFileSync(SAVES, 'utf8');
+const styles = readFileSync(STYLES, 'utf8');
+const shim = readFileSync(SHIM, 'utf8');
+check('打开就是接收端，不是调试台', /web\.loadUrl\(RECEIVER_URL\);/.test(main));
+for (const label of ['自检', '已收文件', '关于']) {
+  check('底栏有「' + label + '」这一项', main.includes('tab("' + label + '"'));
+}
+check('底栏三项都接得到实现', ['openProbe()', 'showFiles()', 'showAbout()'].every((name) => main.includes(name)));
+check('自检是子页：返回键回到接收端', /onBackPressed\(\)[\s\S]{0,260}openReceiver\(\);/.test(main));
+check('不再全屏遮挡，状态栏可见', !/windowFullscreen/.test(styles));
+check('双指缩放开着', /setSupportZoom\(true\)/.test(main));
+check('结果条只在错误时用红', /fault \? "#b3261e"/.test(main) && /postDelayed\(hideStatus/.test(main));
+check('切页前释放镜头', /__decimenRxEjectCamera = function/.test(shim) && /__decimenRxEjectCamera/.test(main));
+check('文件面板两端都认', /Saves\.rows\(this\)/.test(main) && /Saves\.open\(this, which\)/.test(main)
+  && /static String\[\] rows\(/.test(saves) && /static void open\(/.test(saves));
+check('落成功才进历史，落坏的不进', /Saves\.record\(/.test(bridge) && /static void record\(/.test(saves));
+check('已完成的文件不会被下一次保存当残料删掉',
+  /void saveEnd\(String session\)[\s\S]{0,1200}mediaUri = null;[\s\S]{0,160}plainFile = null;/.test(bridge));
+check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-2/.test(build));
 
 await javaParse();
 

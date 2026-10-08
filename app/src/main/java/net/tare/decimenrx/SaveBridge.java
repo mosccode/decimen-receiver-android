@@ -17,7 +17,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 /**
- * The only thing the page may ask the device for: write bytes to Downloads, put
+ * The only things the page may ask the device for: write bytes to storage, put
  * text on the clipboard, open the receiver.
  *
  * The file name is chosen by whatever is in front of the camera, so it arrives
@@ -32,7 +32,11 @@ public final class SaveBridge {
     private OutputStream out;
     private Uri mediaUri;
     private File plainFile;
+    private String name = "";
+    private String mime = "application/octet-stream";
     private String display = "";
+    private String savedUri = "";
+    private String savedPath = "";
     private long written;
     private long expected = -1;
 
@@ -44,13 +48,15 @@ public final class SaveBridge {
     public synchronized void saveBegin(String session, String rawName, String mime, long sizeHint) {
         discard();
         this.session = session == null ? "" : session;
-        String name = safeName(rawName);
-        String type = mime == null || mime.isEmpty() ? "application/octet-stream" : mime;
+        name = safeName(rawName);
+        this.mime = mime == null || mime.isEmpty() ? "application/octet-stream" : mime;
+        savedUri = "";
+        savedPath = "";
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ContentValues values = new ContentValues();
                 values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
-                values.put(MediaStore.MediaColumns.MIME_TYPE, type);
+                values.put(MediaStore.MediaColumns.MIME_TYPE, this.mime);
                 values.put(MediaStore.MediaColumns.RELATIVE_PATH,
                         Environment.DIRECTORY_DOWNLOADS + "/Decimen");
                 mediaUri = activity.getContentResolver()
@@ -58,6 +64,7 @@ public final class SaveBridge {
                 if (mediaUri == null) throw new IOException("MediaStore 拒绝了写入请求");
                 out = activity.getContentResolver().openOutputStream(mediaUri, "w");
                 if (out == null) throw new IOException("MediaStore 打不开写入流");
+                savedUri = mediaUri.toString();
                 display = "Download/Decimen/" + name;
             } else {
                 File root = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
@@ -66,13 +73,14 @@ public final class SaveBridge {
                 if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("建不出 " + dir.getPath());
                 plainFile = unique(dir, name);
                 out = new FileOutputStream(plainFile);
-                display = plainFile.getAbsolutePath();
+                savedPath = plainFile.getAbsolutePath();
+                display = savedPath;
             }
             written = 0;
             expected = sizeHint;
         } catch (Throwable failure) {
             discard();
-            activity.showToast(activity.getString(R.string.save_failed) + "：" + failure);
+            activity.noteError(activity.getString(R.string.save_failed) + "：" + failure);
         }
     }
 
@@ -85,7 +93,7 @@ public final class SaveBridge {
             written += bytes.length;
         } catch (Throwable failure) {
             discard();
-            activity.showToast(activity.getString(R.string.save_failed) + "：" + failure);
+            activity.noteError(activity.getString(R.string.save_failed) + "：" + failure);
         }
     }
 
@@ -93,27 +101,43 @@ public final class SaveBridge {
     public synchronized void saveEnd(String session) {
         if (out == null || !sameSession(session)) return;
         long size = written;
+        long wanted = expected;
         try {
             out.flush();
             out.close();
         } catch (Throwable failure) {
             discard();
-            activity.showToast(activity.getString(R.string.save_failed) + "：" + failure);
+            activity.noteError(activity.getString(R.string.save_failed) + "：" + failure);
             return;
         }
         out = null;
-        this.session = null;
-        if (expected >= 0 && expected != size) {
-            activity.showToast("已保存 " + display + "，但只收到 " + size + "/" + expected + " 字节，请勿使用");
-        } else {
-            activity.showToast("已保存 " + display + " · " + size + " 字节");
+
+        if (wanted >= 0 && wanted != size) {
+            // The page counted the bytes it handed over; a shortfall means the last
+            // chunk never arrived. Keep it and it looks like a received file — and
+            // the container's own check would only fail later, far from here.
+            discard();
+            activity.noteError("只收到 " + size + "/" + wanted + " 字节，这份没有保留");
+            return;
         }
+
+        // Stop pointing at the destination: the next saveBegin() opens by discarding
+        // whatever this one still refers to, and a finished file must not be on that
+        // list — it would be deleted as debris of the transfer after it.
+        this.session = null;
+        mediaUri = null;
+        plainFile = null;
+        written = 0;
+        expected = -1;
+
+        activity.say("已保存 " + display + " · " + size + " 字节");
+        Saves.record(activity, name, savedPath, savedUri, size, mime);
     }
 
     @JavascriptInterface
     public void saveFailed(String why) {
         discard();
-        activity.showToast("页面没能把文件交出来：" + why);
+        activity.noteError("页面没能把文件交出来：" + why);
     }
 
     @JavascriptInterface
@@ -121,7 +145,7 @@ public final class SaveBridge {
         ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
         if (clipboard == null) return;
         clipboard.setPrimaryClip(ClipData.newPlainText("Decimen", text == null ? "" : text));
-        activity.showToast("已复制，粘贴给助手即可");
+        activity.say("已复制，粘贴给助手即可");
     }
 
     @JavascriptInterface
@@ -162,6 +186,9 @@ public final class SaveBridge {
             plainFile.deleteOnExit();
         }
         plainFile = null;
+        session = null;
+        savedUri = "";
+        savedPath = "";
         written = 0;
         expected = -1;
     }

@@ -5,6 +5,5 @@
         <item name="android:colorBackground">@color/ink</item>
         <item name="android:statusBarColor">@color/ink</item>
         <item name="android:navigationBarColor">@color/ink</item>
-        <item name="android:windowFullscreen">true</item>
     </style>
 </resources>

@@ -2,5 +2,4 @@
 <resources>
     <string name="app_name">Decimen 接收端</string>
     <string name="save_failed">保存失败</string>
-    <string name="camera_needed">需要相机权限才能接收</string>
 </resources>
