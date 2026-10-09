@@ -168,6 +168,17 @@
     write(all);
   }
 
+  // 「恢复默认参数」交给原生去重载：这一项清掉之后，页面自己那套默认值
+  // （宽度 1280、帧率 60、线程推到硬件上限、镜头 auto）会在下次加载时重新生效。
+  function clearPrefs() {
+    try {
+      window.localStorage.removeItem(PREFS);
+    } catch (blocked) {
+      return false;
+    }
+    return true;
+  }
+
   function write(all) {
     try {
       window.localStorage.setItem(PREFS, JSON.stringify(all));
@@ -332,7 +343,8 @@
     setPaused: setPaused,
     torch: torch,
     settings: settings,
-    setSetting: setSetting
+    setSetting: setSetting,
+    clearPrefs: clearPrefs
   };
 
   patchClipboard();

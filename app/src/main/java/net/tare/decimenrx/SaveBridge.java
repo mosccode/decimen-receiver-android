@@ -136,6 +136,7 @@ public final class SaveBridge {
 
         activity.say("已保存 " + display + " · " + size + " 字节");
         Saves.record(activity, name, savedPath, savedUri, size, mime);
+        activity.fileLanded();
     }
 
     @JavascriptInterface

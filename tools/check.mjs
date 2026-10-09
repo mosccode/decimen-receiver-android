@@ -105,7 +105,12 @@ check('桥接把 blob 自己的类型交给原生', /headers\.get\("content-type
 const bridgeSource = readFileSync(BRIDGE, 'utf8');
 check('类型缺失或含糊时按扩展名补', /static String usable\(String mime, String name\)/.test(bridgeSource)
   && /MimeTypeMap\.getSingleton\(\)/.test(bridgeSource));
-check('打开与分享都重新认一次类型', (readFileSync(SAVES, 'utf8').match(/SaveBridge\.usable\(/g) || []).length >= 3);
+// 类型在这里只重认一次：记录里那句 mime 可能是旧壳写的 octet-stream，而
+// .png 的后缀自己就足以把相册请回来。open 与 share 都必须走 usableType。
+const savesSource = readFileSync(SAVES, 'utf8');
+check('打开与分享都重新认一次类型', /static String usableType\(JSONObject entry\)/.test(savesSource)
+  && (savesSource.match(/usableType\(entry\)/g) || []).length >= 2
+  && /SaveBridge\.usable\(entry\.optString\("mime"\)/.test(savesSource));
 
 console.log('自检页');
 const probe = readFileSync(PROBE, 'utf8');
@@ -178,7 +183,7 @@ check('控制条三颗都接得到实现', ['togglePause()', 'toggleTorch()', 'r
 check('控制条按页面实况点亮，灰的就是点不动', /paintControl\(TextView button, boolean active, boolean enabled\)/.test(main)
   && /button\.setEnabled\(enabled\)/.test(main));
 // 原生屏与注入驱动之间的只有这几个名字，两侧任意一边改名都会静默失灵。
-for (const name of ['state', 'start', 'setPaused', 'torch', 'settings', 'setSetting']) {
+for (const name of ['state', 'start', 'setPaused', 'torch', 'settings', 'setSetting', 'clearPrefs']) {
   const nativeSide = main.includes('__decimenRxUi.' + name);
   check('__decimenRxUi.' + name, nativeSide && new RegExp('\\b' + name + '\\s*:\\s*' + name + '\\b').test(driver));
 }
@@ -198,7 +203,7 @@ check('落成功才进历史，重名重大小只记一条', /Saves\.record\(/.t
   && /static void record\(/.test(saves) && /old\.optLong\("size"\) == size/.test(saves));
 check('已完成的文件不会被下一次保存当残料删掉',
   /void saveEnd\(String session\)[\s\S]{0,1200}mediaUri = null;[\s\S]{0,160}plainFile = null;/.test(bridge));
-check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-5/.test(build));
+check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-6/.test(build));
 // android.jar 与参考实现 org.json 的静态方法签名不完全一致，而本机无法编译验证；
 // 过桥的字符串一律由自己那套转义负责。
 check('不赌 JSONObject.quote 的签名', !/JSONObject\.quote\(/.test(main));
@@ -234,6 +239,40 @@ check('重启的理由活得过那次重载', /private String pendingNote;/.test
   && /pendingNote = "[\s\S]{0,200}web\.reload\(\)/.test(main) && /if \(pendingNote != null\)/.test(main));
 check('自动恢复不会连环重载', /recoverStall\(\)[\s\S]{0,400}now - lastRecovery < 20000L/.test(main));
 check('手动重置重新拿到一次自动恢复的额度', /private void reset\(\)[\s\S]{0,300}lastRecovery = 0L/.test(main));
+
+console.log('每一件事都要有回应');
+// 结果条是壳唯一的说话渠道。一条一直亮着的红既不是故障也不是提示，用户只会把它
+// 当成壁纸，于是真正的故障混在里面谁也看不见 —— 所以三档里只有故障不自己走。
+check('结果条的三档由同一处渲染', /private void showStatus\(String line, boolean fault, long hold\)/.test(main)
+  && /if \(hold > 0L\) ui\.postDelayed\(hideStatus, hold\)/.test(main));
+check('提示会自己消失，故障不会', /void say\(String line\) \{\s*showStatus\(line, false, [1-9]\d*L\);/.test(main)
+  && /void notice\(String line\) \{\s*showStatus\(line, false, [1-9]\d*L\);/.test(main)
+  && /void noteError\(String line\) \{\s*showStatus\(line, true, 0L\);/.test(main));
+// 壳自己修好了一次卡顿，要说，但那不是「需要用户处理」的故障。
+check('自动恢复的理由只是提示', /pendingNote = null;[\s\S]{0,80}notice\(carried\);/.test(main)
+  && !/noteError\(carried\)/.test(main) && /notice\("这颗镜头不支持补光"\)/.test(main));
+// Android 8 起调起安装器要求发起方声明 REQUEST_INSTALL_PACKAGES，缺了它系统会把
+// 请求静默吞掉 —— 用户看到的就是「点了没反应」。这一版仍不申请该权限，改为说清楚
+// 文件在哪、去哪儿点，并留一颗「仍然试一次」。
+check('安装包走指引，不靠安装权限', /application\/vnd\.android\.package-archive/.test(saves)
+  && /本应用不代你调起安装/.test(saves) && /仍然试一次/.test(saves)
+  && !/android\.permission\.REQUEST_INSTALL_PACKAGES/.test(manifest));
+check('打不开一定说一句为什么', /catch \(RuntimeException refused\)/.test(saves)
+  && /系统拒绝了这次打开/.test(saves) && /这台机器上没有能打开/.test(saves));
+check('没有默认处理程序就让用户自己挑一个', /private static void launch\([\s\S]{0,900}if \(!chooser\) \{\s*\/\/[\s\S]{0,120}launch\(activity, entry, mime, true\)/.test(saves));
+check('删除先问一句', /删掉这个文件？/.test(main) && /confirmDelete\(entry\)/.test(main));
+// 页面会随时自动落盘，每一条新记录都把旧行往下推一位：按第几行动手，删掉的
+// 就不是刚才点的那一份。
+check('文件动作认记录不认第几行', /Saves\.open\(MainActivity\.this, entry\)/.test(main)
+  && /private static int indexOf\(JSONArray all, JSONObject want\)/.test(saves)
+  && !/static void (open|share|remove)\(MainActivity activity, int index\)/.test(saves));
+check('刚落成的文件在打开的文件屏里就会出现', /activity\.fileLanded\(\);/.test(bridge)
+  && /void fileLanded\(\) \{[\s\S]{0,60}if \(screen != SCREEN_FILES\)[\s\S]{0,90}rebuildFiles/.test(main));
+// 「恢复默认」只能清壳自己那组键：页面自己的语言与「收到即展示」不是它该管的。
+check('恢复默认只清壳自己的键', /function clearPrefs\(\)[\s\S]{0,200}localStorage\.removeItem\(PREFS\)/.test(driver)
+  && !/localStorage\.clear\(\)/.test(driver));
+check('恢复默认走重载，让页面自己长回默认值', /settingsList\.addView\(setting\("恢复默认参数"/.test(main)
+  && /private void restoreDefaults\(\)[\s\S]{0,400}reset\(\);/.test(main));
 
 await javaParse();
 

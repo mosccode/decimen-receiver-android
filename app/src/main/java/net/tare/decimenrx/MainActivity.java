@@ -342,7 +342,7 @@ public final class MainActivity extends Activity {
     private void toggleTorch() {
         evaluate("__decimenRxUi && __decimenRxUi.torch()", raw -> {
             if (!"true".equals(raw)) {
-                noteError("这颗镜头不支持补光");
+                notice("这颗镜头不支持补光");
                 return;
             }
             torchOn = !torchOn;
@@ -449,7 +449,6 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < all.length(); i++) {
             final JSONObject entry = all.optJSONObject(i);
             if (entry == null) continue;
-            final int index = i;
             if (fileList.getChildCount() > 0) fileList.addView(divider());
 
             LinearLayout row = new LinearLayout(this);
@@ -457,26 +456,40 @@ public final class MainActivity extends Activity {
             row.setPadding(0, dp(11), 0, dp(11));
             row.addView(line(entry.optString("name"), TEXT, 16f));
             row.addView(line(Saves.human(entry.optLong("size")) + " · "
-                    + Saves.when(entry.optLong("at")) + " · " + where(entry), DIM, 12f));
+                    + Saves.when(entry.optLong("at")) + " · " + Saves.where(entry), DIM, 12f));
 
             LinearLayout actions = new LinearLayout(this);
             actions.setOrientation(LinearLayout.HORIZONTAL);
             actions.setPadding(0, dp(7), 0, 0);
-            actions.addView(small("打开", () -> Saves.open(MainActivity.this, index)));
-            actions.addView(small("分享", () -> Saves.share(MainActivity.this, index)));
-            actions.addView(small("删除", () -> {
-                Saves.remove(MainActivity.this, index);
-                rebuildFiles();
-            }));
+            // The record itself travels to the handler, never its row number: a
+            // file can land at any moment (the page auto-saves), and each arrival
+            // pushes every existing row one slot down. Acting on a position would
+            // then delete a different file than the one whose 删除 was tapped.
+            actions.addView(small("打开", () -> Saves.open(MainActivity.this, entry)));
+            actions.addView(small("分享", () -> Saves.share(MainActivity.this, entry)));
+            actions.addView(small("删除", () -> confirmDelete(entry)));
             row.addView(actions);
             fileList.addView(row);
         }
     }
 
-    private String where(JSONObject entry) {
-        String path = entry.optString("path");
-        if (!path.isEmpty()) return path;
-        return entry.optString("uri").isEmpty() ? "位置未知" : "Download/Decimen";
+    /** Deleting throws the file away for good, so it asks first. */
+    private void confirmDelete(JSONObject entry) {
+        new AlertDialog.Builder(this)
+                .setTitle("删掉这个文件？")
+                .setMessage(entry.optString("name") + " · " + Saves.human(entry.optLong("size")))
+                .setPositiveButton("删除", (dialog, which) -> {
+                    Saves.remove(MainActivity.this, entry);
+                    rebuildFiles();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** Called from the save bridge: a finished file must not arrive to a stale list. */
+    void fileLanded() {
+        if (screen != SCREEN_FILES) return;
+        runOnUiThread(this::rebuildFiles);
     }
 
     private View divider() {
@@ -537,6 +550,12 @@ public final class MainActivity extends Activity {
             final boolean autoshow = page.optBoolean("autoshow");
             settingsList.addView(setting("收到即展示", autoshow ? "开" : "关",
                     () -> writeSetting("autoshow", autoshow ? "false" : "true")));
+        }
+        // 记下来的参数归壳所有，所以「回到官方默认」也只有壳能给：清掉自己那组键，
+        // 再让页面重新加载一次 —— 它自己的默认值（宽度 1280、帧率 60、线程推到硬件
+        // 上限、镜头 auto）就是这么长出来的，不需要在这里抄一份。
+        settingsList.addView(setting("恢复默认参数", "↺", () -> restoreDefaults()));
+        if (page != null) {
             String actual = page.optString("actual");
             if (!actual.isEmpty()) {
                 settingsList.addView(section("当前生效"));
@@ -546,6 +565,14 @@ public final class MainActivity extends Activity {
         settingsList.addView(section("诊断"));
         settingsList.addView(setting("摄像头自检", "›", () -> openProbe()));
         settingsList.addView(setting("关于", versionName(), () -> showAbout()));
+    }
+
+    private void restoreDefaults() {
+        evaluate("__decimenRxUi && __decimenRxUi.clearPrefs()", ignored -> {
+            pendingNote = "采集参数已恢复默认，镜头重新按自动选择打开";
+            // onPageFinished pulls the settings screen again once the page is back.
+            reset();
+        });
     }
 
     private TextView section(String label) {
@@ -677,7 +704,7 @@ public final class MainActivity extends Activity {
                 if (pendingNote != null) {
                     String carried = pendingNote;
                     pendingNote = null;
-                    noteError(carried);
+                    notice(carried);
                 }
                 if (shim.isEmpty()) return;
                 view.evaluateJavascript(shim, null);
@@ -782,24 +809,33 @@ public final class MainActivity extends Activity {
         noteError((source == null ? "" : source.substring(lastSlash(source) + 1) + ":" + line + " ") + message);
     }
 
-    /** A result the user can still read two minutes later, not a Toast that expires. */
+    /** A routine result: neutral, and it folds itself away. */
     void say(String line) {
-        showStatus(line, false);
+        showStatus(line, false, 7000L);
     }
 
+    /**
+     * Something worth knowing but with nothing to act on — the picture restarted
+     * itself, this lens has no flash. Neutral, and it leaves on its own: a bar
+     * that never clears stops being a notice and becomes wallpaper.
+     */
+    void notice(String line) {
+        showStatus(line, false, 12000L);
+    }
+
+    /** Only a real fault stays up, because only a fault needs doing about. */
     void noteError(String line) {
-        showStatus(line, true);
+        showStatus(line, true, 0L);
     }
 
-    private void showStatus(String line, boolean fault) {
+    private void showStatus(String line, boolean fault, long hold) {
         runOnUiThread(() -> {
             ui.removeCallbacks(hideStatus);
             status.setText(line);
             status.setBackgroundColor(Color.parseColor(fault ? FAULT : LINE));
             status.setTextColor(Color.parseColor(fault ? "#ffe4e6" : TEXT));
             status.setVisibility(View.VISIBLE);
-            // A fault stays until the user has read it; a routine result folds away.
-            if (!fault) ui.postDelayed(hideStatus, 7000L);
+            if (hold > 0L) ui.postDelayed(hideStatus, hold);
         });
     }
 
