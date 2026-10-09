@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -99,6 +100,9 @@ public final class MainActivity extends Activity {
     private JSONObject pageSettings;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private boolean foreground = true;
+    private long lastRecovery;
+    private String pendingNote;
     private final Runnable hideStatus = new Runnable() {
         @Override
         public void run() {
@@ -108,7 +112,7 @@ public final class MainActivity extends Activity {
     private final Runnable pollPage = new Runnable() {
         @Override
         public void run() {
-            if (screen != SCREEN_RECEIVE || !onReceiver) return;
+            if (screen != SCREEN_RECEIVE || !onReceiver || !foreground) return;
             evaluate("__decimenRxUi && __decimenRxUi.state()", raw -> {
                 JSONObject state = parse(raw);
                 if (state != null) applyState(state);
@@ -200,6 +204,30 @@ public final class MainActivity extends Activity {
         }
         web.loadUrl(RECEIVER_URL);
         show(SCREEN_RECEIVE);
+    }
+
+    /**
+     * Android takes the camera away from a backgrounded app and gives it to
+     * whatever came forward, and the page never hears about it — it listens to
+     * no visibility event at all, so its frame loop just stops being called and
+     * the preview freezes on the last frame. Freezing the renderer here keeps the
+     * page from spinning against a dead stream, and the resume half hands both
+     * back to the watchdog, which is what actually brings the picture up again.
+     */
+    @Override
+    protected void onPause() {
+        super.onPause();
+        foreground = false;
+        ui.removeCallbacks(pollPage);
+        web.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        web.onResume();
+        foreground = true;
+        if (screen == SCREEN_RECEIVE && onReceiver) ui.postDelayed(pollPage, 400L);
     }
 
     private FrameLayout.LayoutParams fullFrame(int bottomMargin) {
@@ -326,17 +354,44 @@ public final class MainActivity extends Activity {
     private void reset() {
         paused = false;
         torchOn = false;
+        // A deliberate reset gets its own chance to recover on its own.
+        lastRecovery = 0L;
         if (onReceiver) web.reload();
         else openReceiver();
     }
 
     private void applyState(JSONObject state) {
+        if (state.optBoolean("stalled")) {
+            recoverStall();
+            return;
+        }
         boolean running = state.optBoolean("running");
         paused = state.optBoolean("paused");
         torchOn = state.optBoolean("torchOn");
         pauseAction.setText(paused ? "继续" : "暂停");
         paintControl(pauseAction, paused, running);
         paintControl(torchAction, torchOn, state.optBoolean("torch"));
+    }
+
+    /**
+     * The watchdog inside the page already tried the cheap repair (push playback
+     * again); a frame counter that still has not moved means the stream is gone.
+     * Reopening the receiver is the only restart the page supports from here, and
+     * it is the same path 重置 takes — so say so on the bar, because a transfer in
+     * progress really was lost.
+     */
+    private void recoverStall() {
+        long now = SystemClock.uptimeMillis();
+        if (now - lastRecovery < 20000L) {
+            ui.removeCallbacks(pollPage);
+            paintControl(pauseAction, false, false);
+            paintControl(torchAction, false, false);
+            noteError("重新打开接收之后画面仍然没有帧：镜头多半还被别的应用占着，关掉它再按重置");
+            return;
+        }
+        lastRecovery = now;
+        pendingNote = "刚才退到后台时镜头被系统收回，壳已重新打开接收；那一次未传完的要重发";
+        web.reload();
     }
 
     private void evaluate(String script, PageValue callback) {
@@ -616,6 +671,14 @@ public final class MainActivity extends Activity {
                 onReceiver = url.contains("/decimen-receiver.html");
                 ui.removeCallbacks(hideStatus);
                 status.setVisibility(View.GONE);
+                // A reload wipes the bar, so a reason that belongs to the reload
+                // itself has to be carried across it — otherwise the picture
+                // restarts and the user never learns why.
+                if (pendingNote != null) {
+                    String carried = pendingNote;
+                    pendingNote = null;
+                    noteError(carried);
+                }
                 if (shim.isEmpty()) return;
                 view.evaluateJavascript(shim, null);
                 if (!onReceiver) return;

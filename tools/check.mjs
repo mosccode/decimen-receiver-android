@@ -198,10 +198,42 @@ check('落成功才进历史，重名重大小只记一条', /Saves\.record\(/.t
   && /static void record\(/.test(saves) && /old\.optLong\("size"\) == size/.test(saves));
 check('已完成的文件不会被下一次保存当残料删掉',
   /void saveEnd\(String session\)[\s\S]{0,1200}mediaUri = null;[\s\S]{0,160}plainFile = null;/.test(bridge));
-check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-4/.test(build));
+check('壳版本号与形态改动同步', /decimen-0\.5\.3-shell-5/.test(build));
 // android.jar 与参考实现 org.json 的静态方法签名不完全一致，而本机无法编译验证；
 // 过桥的字符串一律由自己那套转义负责。
 check('不赌 JSONObject.quote 的签名', !/JSONObject\.quote\(/.test(main));
+
+console.log('参数回位：官方页只存语言与「收到即展示」');
+// 镜头/宽度/帧率/线程只活在 DOM 里，重置与重开应用都会把它们打回页面默认值。
+// 壳把这几样记在自己的键下，所以「记了」和「在点启动之前记回来」两件事都要成立。
+check('壳自己那组参数有独立的键', /decimen:rx-prefs/.test(driver) && /setDomStorageEnabled\(true\)/.test(main));
+check('改动写进壳的键', /function setSetting\(key, value\)[\s\S]{0,600}remember\(key, String\(value\)\)/.test(driver));
+check('回位在点启动之前发生', /function start\(\)[\s\S]{0,400}restoreOnce\(\);[\s\S]{0,120}p\.click\(\)/.test(driver));
+check('回位只发生一次', /function restoreOnce\(\)[\s\S]{0,200}if \(restored\) return/.test(driver));
+// 镜头的 deviceId 要等页面自己 enumerateDevices 之后才有选项，而 deviceId 又不保证
+// 跨会话稳定：认不出就必须作废，否则每次开应用都空转到超时。
+check('镜头等页面填完选项再换', /function start\(\)[\s\S]{0,300}restoreCamera\(0\)/.test(driver));
+check('认不出的 deviceId 会被作废而不是死等', /function restoreCamera\(tries\)[\s\S]{0,900}forget\("camera"\)/.test(driver));
+
+console.log('后台收回镜头');
+// 这条修复的前提是官方页自己对可见性一无所知；它哪天开始监听了，壳的看门狗就该退让。
+check('原件确实没有可见性处理', !/visibilitychange/.test(asset) && !/document\.hidden/.test(asset));
+check('生命周期成对冻结与解冻渲染端', /protected void onPause\(\)[\s\S]{0,300}web\.onPause\(\)/.test(main)
+  && /protected void onResume\(\)[\s\S]{0,300}web\.onResume\(\)/.test(main));
+check('回前台后看门狗重新上岗', /web\.onResume\(\);[\s\S]{0,300}ui\.postDelayed\(pollPage/.test(main));
+check('驱动数帧并把结论放进 state', /watch\.misses \+= 1/.test(driver)
+  && /function state\(\)[\s\S]{0,400}stalled: stalled\(\)/.test(driver));
+// 页面自己换镜头那几百毫秒里旧轨道正是 ended，和「被系统收回」长得一样；
+// 它靠那颗 <select> 的禁用标记来区分，认错了就会把正常换镜头判成故障。
+check('换镜头期间不计卡住', /if \(pickNode && pickNode\.disabled\)/.test(driver));
+check('先自己推播放，实在不行才重载', /if \(node\.paused\) node\.play\(\)/.test(driver)
+  && /state\.optBoolean\("stalled"\)/.test(main)
+  && /private void recoverStall\(\)[\s\S]{0,1200}web\.reload\(\)/.test(main));
+// 重载会把结果条清空，所以「为什么重启了」必须能跨过这次重载活下来。
+check('重启的理由活得过那次重载', /private String pendingNote;/.test(main)
+  && /pendingNote = "[\s\S]{0,200}web\.reload\(\)/.test(main) && /if \(pendingNote != null\)/.test(main));
+check('自动恢复不会连环重载', /recoverStall\(\)[\s\S]{0,400}now - lastRecovery < 20000L/.test(main));
+check('手动重置重新拿到一次自动恢复的额度', /private void reset\(\)[\s\S]{0,300}lastRecovery = 0L/.test(main));
 
 await javaParse();
 
